@@ -1,127 +1,69 @@
-import React from "react"
-import { Link, graphql } from "gatsby"
+import * as React from "react"
 import { GatsbyImage } from "gatsby-plugin-image"
-import parse from "html-react-parser"
-
-// We're using Gutenberg so we need the block styles
-// these are copied into this project due to a conflict in the postCSS
-// version used by the Gatsby and @wordpress packages that causes build
-// failures.
-// @todo update this once @wordpress upgrades their postcss version
-import "../css/@wordpress/block-library/build-style/style.css"
-import "../css/@wordpress/block-library/build-style/theme.css"
-
-import Bio from "../components/bio"
 import Layout from "../components/layout"
-import Seo from "../components/seo"
+import {
+  Container,
+  Flex,
+  Box,
+  Space,
+  Heading,
+  Text,
+  Avatar,
+} from "../components/ui"
+import { avatar as avatarStyle } from "../components/ui.css"
+import * as styles from "./blog-post.css"
+import SEOHead from "../components/head"
 
-const BlogPostTemplate = ({ data: { previous, next, post } }) => {
-  const featuredImage = {
-    data: post.featuredImage?.node?.localFile?.childImageSharp?.gatsbyImageData,
-    alt: post.featuredImage?.node?.alt || ``,
-  }
-
+export default function BlogPost(props) {
   return (
     <Layout>
-      <Seo title={post.title} description={post.excerpt} />
-
-      <article
-        className="blog-post"
-        itemScope
-        itemType="http://schema.org/Article"
-      >
-        <header>
-          <h1 itemProp="headline">{parse(post.title)}</h1>
-
-          <p>{post.date}</p>
-
-          {/* if we have a featured image for this post let's display it */}
-          {featuredImage?.data && (
+      <Container>
+        <Box paddingY={5}>
+          <Heading as="h1" center>
+            {props.title}
+          </Heading>
+          <Space size={4} />
+          {props.author && (
+            <Box center>
+              <Flex>
+                {props.author.avatar &&
+                  (!!props.author.avatar.gatsbyImageData ? (
+                    <Avatar
+                      {...props.author.avatar}
+                      image={props.author.avatar.gatsbyImageData}
+                    />
+                  ) : (
+                    <img
+                      src={props.author.avatar.url}
+                      alt={props.author.name}
+                      className={avatarStyle}
+                    />
+                  ))}
+                <Text variant="bold">{props.author.name}</Text>
+              </Flex>
+            </Box>
+          )}
+          <Space size={4} />
+          <Text center>{props.date}</Text>
+          <Space size={4} />
+          {props.image && (
             <GatsbyImage
-              image={featuredImage.data}
-              alt={featuredImage.alt}
-              style={{ marginBottom: 50 }}
+              alt={props.image.alt}
+              image={props.image.gatsbyImageData}
             />
           )}
-        </header>
-
-        {!!post.content && (
-          <section itemProp="articleBody">{parse(post.content)}</section>
-        )}
-
-        <hr />
-
-        <footer>
-          <Bio />
-        </footer>
-      </article>
-
-      <nav className="blog-post-nav">
-        <ul
-          style={{
-            display: `flex`,
-            flexWrap: `wrap`,
-            justifyContent: `space-between`,
-            listStyle: `none`,
-            padding: 0,
-          }}
-        >
-          <li>
-            {previous && (
-              <Link to={previous.uri} rel="prev">
-                ← {parse(previous.title)}
-              </Link>
-            )}
-          </li>
-
-          <li>
-            {next && (
-              <Link to={next.uri} rel="next">
-                {parse(next.title)} →
-              </Link>
-            )}
-          </li>
-        </ul>
-      </nav>
+          <Space size={5} />
+          <div
+            className={styles.blogPost}
+            dangerouslySetInnerHTML={{
+              __html: props.html,
+            }}
+          />
+        </Box>
+      </Container>
     </Layout>
   )
 }
-
-export default BlogPostTemplate
-
-export const pageQuery = graphql`
-  query BlogPostById(
-    $id: String!
-    $previousPostId: String
-    $nextPostId: String
-  ) {
-    post: wpPost(id: { eq: $id }) {
-      id
-      excerpt
-      content
-      title
-      featuredImage {
-        node {
-          altText
-          localFile {
-            childImageSharp {
-              gatsbyImageData(
-                quality: 100
-                placeholder: TRACED_SVG
-                layout: FULL_WIDTH
-              )
-            }
-          }
-        }
-      }
-    }
-    previous: wpPost(id: { eq: $previousPostId }) {
-      uri
-      title
-    }
-    next: wpPost(id: { eq: $nextPostId }) {
-      uri
-      title
-    }
-  }
-`
+export const Head = (props) => {
+  return <SEOHead {...props} description={props.excerpt} />
+}

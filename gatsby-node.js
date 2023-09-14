@@ -1,200 +1,549 @@
-const path = require(`path`)
-const chunk = require(`lodash/chunk`)
+const { getGatsbyImageResolver } = require("gatsby-plugin-image/graphql-utils")
 
-// This is a simple debugging tool
-// dd() will prettily dump to the terminal and kill the process
-// const { dd } = require(`dumper.js`)
-
-/**
- * exports.createPages is a built-in Gatsby Node API.
- * It's purpose is to allow you to create pages for your site! 💡
- *
- * See https://www.gatsbyjs.com/docs/node-apis/#createPages for more info.
- */
-exports.createPages = async gatsbyUtilities => {
-  // Query our posts from the GraphQL server
-  const posts = await getPosts(gatsbyUtilities)
-
-  // If there are no posts in WordPress, don't do anything
-  if (!posts.length) {
-    return
-  }
-
-  // If there are posts, create pages for them
-  await createIndividualBlogPostPages({ posts, gatsbyUtilities })
-
-  // And a paginated archive
-  await createBlogPostArchive({ posts, gatsbyUtilities })
-}
-
-/**
- * This function creates all the individual blog pages in this site
- */
-const createIndividualBlogPostPages = async ({ posts, gatsbyUtilities }) =>
-  Promise.all(
-    posts.map(({ previous, post, next }) =>
-      // createPage is an action passed to createPages
-      // See https://www.gatsbyjs.com/docs/actions#createPage for more info
-      gatsbyUtilities.actions.createPage({
-        // Use the WordPress uri as the Gatsby page path
-        // This is a good idea so that internal links and menus work 👍
-        path: post.uri,
-
-        // use the blog post template as the page component
-        component: path.resolve(`./src/templates/blog-post.js`),
-
-        // `context` is available in the template as a prop and
-        // as a variable in GraphQL.
-        context: {
-          // we need to add the post id here
-          // so our blog post template knows which blog post
-          // the current page is (when you open it in a browser)
-          id: post.id,
-
-          // We also use the next and previous id's to query them and add links!
-          previousPostId: previous ? previous.id : null,
-          nextPostId: next ? next.id : null,
+exports.createSchemaCustomization = async ({ actions }) => {
+  actions.createFieldExtension({
+    name: "wpImagePassthroughResolver",
+    extend(options) {
+      const { args } = getGatsbyImageResolver()
+      return {
+        args,
+        async resolve(source, args, context, info) {
+          const imageType = info.schema.getType("ImageSharp")
+          const file = context.nodeModel.getNodeById({
+            id: source.localFile?.id,
+          })
+          if (!file) return null
+          const image = context.nodeModel.getNodeById({
+            id: file.children[0],
+          })
+          const resolver = imageType.getFields().gatsbyImageData.resolve
+          if (!resolver) return null
+          return await resolver(image, args, context, info)
         },
-      })
-    )
-  )
-
-/**
- * This function creates all the individual blog pages in this site
- */
-async function createBlogPostArchive({ posts, gatsbyUtilities }) {
-  const graphqlResult = await gatsbyUtilities.graphql(/* GraphQL */ `
-    {
-      wp {
-        readingSettings {
-          postsPerPage
-        }
       }
+    },
+  })
+
+  actions.createFieldExtension({
+    name: "wpRecursiveImage",
+    extend(options) {
+      return {
+        async resolve(source, args, context, info) {
+          return source
+        },
+      }
+    },
+  })
+
+  // interfaces
+  actions.createTypes(/* GraphQL */ `
+    interface HomepageImage implements Node {
+      id: ID!
+      alt: String
+      gatsbyImageData: GatsbyImageData @wpImagePassthroughResolver
+      image: HomepageImage
+      localFile: File
+      url: String
+    }
+
+    interface HomepageBlock implements Node {
+      id: ID!
+      blocktype: String
     }
   `)
 
-  const { postsPerPage } = graphqlResult.data.wp.readingSettings
+  // blocks
+  actions.createTypes(/* GraphQL */ `
+    type HomepageLink implements Node {
+      id: ID!
+      href: String
+      text: String
+    }
 
-  const postsChunkedIntoArchivePages = chunk(posts, postsPerPage)
-  const totalPages = postsChunkedIntoArchivePages.length
+    type HomepageHero implements Node & HomepageBlock {
+      id: ID!
+      blocktype: String
+      heading: String!
+      kicker: String
+      subhead: String
+      image: HomepageImage @link
+      text: String
+      links: [HomepageLink] @link
+    }
 
-  return Promise.all(
-    postsChunkedIntoArchivePages.map(async (_posts, index) => {
-      const pageNumber = index + 1
+    type HomepageCta implements Node & HomepageBlock {
+      id: ID!
+      blocktype: String
+      kicker: String
+      heading: String
+      text: String
+      links: [HomepageLink] @link
+      image: HomepageImage @link
+    }
 
-      const getPagePath = page => {
-        if (page > 0 && page <= totalPages) {
-          // Since our homepage is our blog page
-          // we want the first page to be "/" and any additional pages
-          // to be numbered.
-          // "/blog/2" for example
-          return page === 1 ? `/` : `/blog/${page}`
-        }
+    type HomepageFeature implements Node & HomepageBlock {
+      id: ID!
+      blocktype: String
+      heading: String
+      kicker: String
+      text: String
+      image: HomepageImage @link
+      links: [HomepageLink] @link
+    }
 
-        return null
-      }
+    type HomepageTestimonial implements Node {
+      id: ID!
+      quote: String
+      source: String
+      avatar: HomepageImage @link
+    }
 
-      // createPage is an action passed to createPages
-      // See https://www.gatsbyjs.com/docs/actions#createPage for more info
-      await gatsbyUtilities.actions.createPage({
-        path: getPagePath(pageNumber),
+    type HomepageBenefit implements Node {
+      id: ID!
+      heading: String
+      text: String
+      image: HomepageImage @link
+    }
 
-        // use the blog post archive template as the page component
-        component: path.resolve(`./src/templates/blog-post-archive.js`),
+    type HomepageLogo implements Node {
+      id: ID!
+      image: HomepageImage @link
+      alt: String @proxy(from: "image.title")
+    }
 
-        // `context` is available in the template as a prop and
-        // as a variable in GraphQL.
-        context: {
-          // the index of our loop is the offset of which posts we want to display
-          // so for page 1, 0 * 10 = 0 offset, for page 2, 1 * 10 = 10 posts offset,
-          // etc
-          offset: index * postsPerPage,
+    type HomepageProduct implements Node {
+      id: ID!
+      heading: String
+      text: String
+      image: HomepageImage @link
+      links: [HomepageLink] @link
+    }
 
-          // We need to tell the template how many posts to display too
-          postsPerPage,
+    type HomepageFeatureList implements Node & HomepageBlock {
+      id: ID!
+      blocktype: String
+      kicker: String
+      heading: String
+      text: String
+      content: [HomepageFeature] @link
+    }
 
-          nextPagePath: getPagePath(pageNumber + 1),
-          previousPagePath: getPagePath(pageNumber - 1),
+    type HomepageLogoList implements Node & HomepageBlock {
+      id: ID!
+      blocktype: String
+      text: String
+      logos: [HomepageImage] @link
+    }
+
+    type HomepageTestimonialList implements Node & HomepageBlock {
+      id: ID!
+      blocktype: String
+      kicker: String
+      heading: String
+      content: [HomepageTestimonial] @link
+    }
+
+    type HomepageBenefitList implements Node & HomepageBlock {
+      id: ID!
+      blocktype: String
+      heading: String
+      text: String
+      content: [HomepageBenefit] @link
+    }
+
+    type HomepageStat implements Node {
+      id: ID!
+      value: String
+      label: String
+      heading: String
+    }
+
+    type HomepageStatList implements Node & HomepageBlock {
+      id: ID!
+      blocktype: String
+      kicker: String
+      heading: String
+      text: String
+      image: HomepageImage @link
+      icon: HomepageImage @link
+      content: [HomepageStat] @link
+      links: [HomepageLink] @link
+    }
+
+    type HomepageProductList implements Node & HomepageBlock {
+      id: ID!
+      blocktype: String
+      kicker: String
+      heading: String
+      text: String
+      content: [HomepageProduct] @link
+    }
+
+    type AboutHero implements Node & HomepageBlock {
+      id: ID!
+      blocktype: String
+      heading: String
+      text: String
+      image: HomepageImage @link
+    }
+
+    type AboutStat implements Node & HomepageBlock {
+      id: ID!
+      blocktype: String
+      value: String
+      label: String
+    }
+
+    type AboutStatList implements Node & HomepageBlock {
+      id: ID!
+      blocktype: String
+      content: [AboutStat] @link
+    }
+
+    type AboutProfile implements Node {
+      id: ID!
+      image: HomepageImage @link
+      name: String
+      jobTitle: String
+    }
+
+    type AboutLeadership implements Node & HomepageBlock {
+      id: ID!
+      blocktype: String
+      kicker: String
+      heading: String
+      subhead: String
+      content: [AboutProfile] @link
+    }
+
+    type AboutLogoList implements Node & HomepageBlock {
+      id: ID!
+      blocktype: String
+      heading: String
+      links: [HomepageLink] @link
+      logos: [HomepageImage] @link
+    }
+  `)
+
+  // pages
+  actions.createTypes(/* GraphQL */ `
+    type Homepage implements Node {
+      id: ID!
+      title: String
+      description: String
+      image: HomepageImage @link
+      content: [HomepageBlock] @link
+    }
+
+    type AboutPage implements Node {
+      id: ID!
+      title: String
+      description: String
+      image: HomepageImage @link
+      content: [HomepageBlock] @link
+    }
+
+    type Page implements Node {
+      id: ID!
+      slug: String!
+      title: String
+      description: String
+      image: HomepageImage @link
+      html: String
+    }
+  `)
+
+  // WordPress types
+  actions.createTypes(/* GraphQL */ `
+    type WpMediaItem implements Node & RemoteFile & HomepageImage {
+      id: ID!
+      alt: String @proxy(from: "altText")
+      altText: String
+      gatsbyImageData: GatsbyImageData @wpImagePassthroughResolver
+      image: HomepageImage @wpRecursiveImage
+      localFile: File
+      url: String @proxy(from: "mediaItemUrl")
+      mediaItemUrl: String
+    }
+  `)
+}
+
+exports.onCreateNode = ({
+  node,
+  actions,
+  getNode,
+  createNodeId,
+  createContentDigest,
+  reporter,
+}) => {
+  if (!node.internal.type.includes("Wp")) return
+
+  const createLinkNode =
+    (parent) =>
+    ({ url, title, ...rest }, i) => {
+      const id = createNodeId(`${parent.id} >>> HomepageLink ${url} ${i}`)
+      actions.createNode({
+        id,
+        internal: {
+          type: "HomepageLink",
+          contentDigest: createContentDigest({ url, title }),
         },
+        href: url,
+        text: title,
       })
+      return id
+    }
+
+  const createItemNode = (parent, type) => (data, i) => {
+    const id = createNodeId(`${parent.id} >>> ${type} ${i}`)
+    if (data.image) {
+      data.image = data.image?.id
+    }
+    if (data.avatar) {
+      data.avatar = data.avatar?.id
+    }
+    if (Array.isArray(data.link)) {
+      data.links = data.link.filter(Boolean).map(createLinkNode(parent))
+    }
+    actions.createNode({
+      ...data,
+      id,
+      internal: {
+        type,
+        contentDigest: createContentDigest(data),
+      },
     })
-  )
-}
-
-/**
- * This function queries Gatsby's GraphQL server and asks for
- * All WordPress blog posts. If there are any GraphQL error it throws an error
- * Otherwise it will return the posts 🙌
- *
- * We're passing in the utilities we got from createPages.
- * So see https://www.gatsbyjs.com/docs/node-apis/#createPages for more info!
- */
-async function getPosts({ graphql, reporter }) {
-  const graphqlResult = await graphql(/* GraphQL */ `
-    query WpPosts {
-      # Query all WordPress blog posts sorted by date
-      allWpPost(sort: { fields: [date], order: DESC }) {
-        edges {
-          previous {
-            id
-          }
-
-          # note: this is a GraphQL alias. It renames "node" to "post" for this query
-          # We're doing this because this "node" is a post! It makes our code more readable further down the line.
-          post: node {
-            id
-            uri
-          }
-
-          next {
-            id
-          }
-        }
-      }
-    }
-  `)
-
-  if (graphqlResult.errors) {
-    reporter.panicOnBuild(
-      `There was an error loading your blog posts`,
-      graphqlResult.errors
-    )
-    return
+    return id
   }
 
-  return graphqlResult.data.allWpPost.edges
-}
+  if (node.internal.type === "WpPage") {
+    switch (node.slug) {
+      case "homepage":
+        // prettier-ignore
+        const {
+          description,
+          hero,
+          logoList,
+          featureList,
+          productList,
+          benefitList,
+          statList,
+          testimonialList,
+          cta,
+        } = node.homepage
 
+        const content = {
+          features: [featureList.feature1, featureList.feature2]
+            .filter(Boolean)
+            .map((feature) => ({
+              ...feature,
+              blocktype: "Feature",
+            }))
+            .map(createItemNode(node, "HomepageFeature")),
+          products: [
+            productList.product1,
+            productList.product2,
+            productList.product3,
+          ]
+            .filter(Boolean)
+            .map(createItemNode(node, "HomepageProduct")),
+          benefits: [
+            benefitList.benefit1,
+            benefitList.benefit2,
+            benefitList.benefit3,
+          ]
+            .filter(Boolean)
+            .map(createItemNode(node, "HomepageBenefit")),
+          stats: [statList.stat1, statList.stat2, statList.stat3]
+            .filter(Boolean)
+            .map(createItemNode(node, "HomepageStat")),
+          testimonials: [
+            testimonialList.testimonial1,
+            testimonialList.testimonial2,
+            testimonialList.testimonial3,
+            testimonialList.testimonial4,
+          ]
+            .filter(Boolean)
+            .map(createItemNode(node, "HomepageTestimonial")),
+        }
 
+        const blocks = {
+          hero: {
+            id: createNodeId(`${node.id} >>> HomepageHero`),
+            ...hero,
+            image: hero.image?.id,
+            links: [hero.cta1, hero.cta2]
+              .filter(Boolean)
+              .map(createLinkNode(node.id)),
+          },
+          logoList: {
+            id: createNodeId(`${node.id} >>> HomepageLogoList`),
+            ...logoList,
+            logos: logoList.logos?.filter(Boolean).map((logo) => logo.id) || [],
+          },
+          featureList: {
+            id: createNodeId(`${node.id} >>> HomepageFeatureList`),
+            ...featureList,
+            content: content.features,
+          },
+          productList: {
+            id: createNodeId(`${node.id} >>> HomepageProductList`),
+            ...productList,
+            content: content.products,
+          },
+          benefitList: {
+            id: createNodeId(`${node.id} >>> HomepageBenefitList`),
+            ...benefitList,
+            content: content.benefits,
+          },
+          statList: {
+            id: createNodeId(`${node.id} >>> HomepageStatList`),
+            ...statList,
+            image: statList.image?.id,
+            icon: statList.icon?.id,
+            links: [statList.link].filter(Boolean).map(createLinkNode(node.id)),
+            content: content.stats,
+          },
+          testimonialList: {
+            id: createNodeId(`${node.id} >>> HomepageTestimonialList`),
+            ...testimonialList,
+            content: content.testimonials,
+          },
+          cta: {
+            id: createNodeId(`${node.id} >>> HompageCta`),
+            ...cta,
+            image: cta.image?.id,
+            links: [cta.link1, cta.link2]
+              .filter(Boolean)
+              .map(createLinkNode(node.id)),
+          },
+        }
 
-
-async function createPagesTemplate({ graphql, actions, reporter }) {
-    const { createPage } = actions
-
-    const PageTemplate = path.resolve("./src/templates/page.js")
-    const result = await graphql(`
-   {
-    
-     allWpPage {
-       edges {
-         node {
-           slug
-           id
-         }
-       }
-     }
-   }
- `)
-
-    const Pages = result.data.allWpPage.edges
-    Pages.forEach(page => {
-        createPage({
-            path: `/${page.node.slug}`,
-            component: PageTemplate,
-            context: {
-                id: page.node.id,
-            },
+        actions.createNode({
+          ...blocks.hero,
+          blocktype: "HomepageHero",
+          internal: {
+            type: "HomepageHero",
+            contentDigest: node.internal.contentDigest,
+          },
         })
-    })
 
+        actions.createNode({
+          ...blocks.logoList,
+          blocktype: "HomepageLogoList",
+          internal: {
+            type: "HomepageLogoList",
+            contentDigest: node.internal.contentDigest,
+          },
+        })
+
+        actions.createNode({
+          ...blocks.featureList,
+          blocktype: "HomepageFeatureList",
+          internal: {
+            type: "HomepageFeatureList",
+            contentDigest: node.internal.contentDigest,
+          },
+        })
+
+        actions.createNode({
+          ...blocks.productList,
+          blocktype: "HomepageProductList",
+          internal: {
+            type: "HomepageProductList",
+            contentDigest: node.internal.contentDigest,
+          },
+        })
+
+        actions.createNode({
+          ...blocks.benefitList,
+          blocktype: "HomepageBenefitList",
+          internal: {
+            type: "HomepageBenefitList",
+            contentDigest: node.internal.contentDigest,
+          },
+        })
+
+        actions.createNode({
+          ...blocks.statList,
+          blocktype: "HomepageStatList",
+          internal: {
+            type: "HomepageStatList",
+            contentDigest: node.internal.contentDigest,
+          },
+        })
+
+        actions.createNode({
+          ...blocks.testimonialList,
+          blocktype: "HomepageTestimonialList",
+          internal: {
+            type: "HomepageTestimonialList",
+            contentDigest: node.internal.contentDigest,
+          },
+        })
+
+        actions.createNode({
+          ...blocks.cta,
+          blocktype: "HomepageCta",
+          internal: {
+            type: "HomepageCta",
+            contentDigest: node.internal.contentDigest,
+          },
+        })
+
+        actions.createNode({
+          ...node.homepage,
+          id: createNodeId(`${node.id} >>> Homepage`),
+          internal: {
+            type: "Homepage",
+            contentDigest: node.internal.contentDigest,
+          },
+          parent: node.id,
+          title: node.title,
+          description,
+          image: node.featuredImage?.node?.id,
+          content: [
+            blocks.hero.id,
+            blocks.logoList.id,
+            blocks.productList.id,
+            blocks.featureList.id,
+            blocks.benefitList.id,
+            blocks.statList.id,
+            blocks.testimonialList.id,
+            blocks.cta.id,
+          ],
+        })
+
+        break
+      default:
+        actions.createNode({
+          ...node.page,
+          id: createNodeId(`${node.id} >>> Page ${node.slug}`),
+          internal: {
+            type: "Page",
+            contentDigest: node.internal.contentDigest,
+          },
+          parent: node.id,
+          slug: node.slug,
+          title: node.title,
+          description: node.page?.description,
+          image: node.featuredImage?.node?.id,
+          html: node.content,
+        })
+        break
+    }
+  }
 }
+
+exports.createPages = ({ actions }) => {
+  const { createSlice } = actions
+  createSlice({
+    id: "header",
+    component: require.resolve("./src/components/header.js"),
+  })
+  createSlice({
+    id: "footer",
+    component: require.resolve("./src/components/footer.js"),
+  })
+}
+      
